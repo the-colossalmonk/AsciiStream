@@ -12,10 +12,9 @@
 AsciiStream is a high-performance, real-time webcam filter that converts video input into dynamic ASCII art. Built with React and optimized for 60FPS rendering, it offers a retro cyber-aesthetic experience directly in your browser.
 
 ## Demo
+![AsciiStreamDemo](https://github.com/user-attachments/assets/a0778727-0802-402a-994c-9d2c5fcd67fb)
 
-<div align="center">
-  <video src="https://github.com/the-colossalmonk/AsciiStream/raw/main/public/ascii_stream_demo.mp4" width="100%" controls autoplay loop muted></video>
-</div>
+Get a better video link at: <a href = "https://github.com/the-colossalmonk/AsciiStream/blob/main/public/ascii_stream_demo.mp4">Ascii Stream Demo Video</a>
 
 ## Features
 

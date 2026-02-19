@@ -1,0 +1,7 @@
+{
+  "name": "CyberSight - ASCII Vision",
+  "description": "Real-time webcam to ASCII/Gibberish converter with AI analysis capabilities.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

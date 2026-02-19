@@ -14,10 +14,7 @@ AsciiStream is a high-performance, real-time webcam filter that converts video i
 ## Demo
 
 <div align="center">
-  <h3>
-    <a href="public/ascii_stream_demo.mp4">🔴 Watch Demo Video (MP4)</a>
-  </h3>
-  <p><em>(GitHub does not support embedded videos from the repository. Click above to view.)</em></p>
+  <video src="https://github.com/the-colossalmonk/AsciiStream/raw/main/public/ascii_stream_demo.mp4" width="100%" controls autoplay loop muted></video>
 </div>
 
 ## Features

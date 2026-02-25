@@ -1,12 +1,21 @@
 import React, { useState } from 'react';
 import { CharSetType, ColorMode } from '../constants';
-import { Settings, Sliders, Type, Monitor, Moon, Sun, Eye, Zap, RotateCcw, FlipHorizontal, Waves, Gauge, ScanLine, Info, X } from 'lucide-react';
+import { Settings, Sliders, Type, Monitor, Moon, Sun, Eye, Camera, Video, RotateCcw, FlipHorizontal, Waves, Gauge, ScanLine, Info, Zap, X } from 'lucide-react';
 
 const Controls = ({
     settings,
     updateSettings,
     resetSettings,
-    videoRef
+    videoRef,
+    // capture props
+    captureMode,
+    setCaptureMode,
+    isRecording,
+    onCapturePhoto,
+    onStartRecording,
+    onStopRecording,
+    lastMedia,
+    requestGifExport
 }) => {
     const [showInfo, setShowInfo] = useState(false);
 

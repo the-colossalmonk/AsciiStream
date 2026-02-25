@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useAsciiCam } from './hooks/useAsciiCam';
 import AsciiDisplay from './components/AsciiDisplay';
 import Controls from './components/Controls';
@@ -9,8 +9,19 @@ const App = () => {
     const [settings, setSettings] = useState(DEFAULT_SETTINGS);
     const [showControls, setShowControls] = useState(true);
 
+    // capture state
+    const [captureMode, setCaptureMode] = useState('photo'); // 'photo' | 'video'
+    const [isRecording, setIsRecording] = useState(false);
+    const [lastMedia, setLastMedia] = useState(null);
+
+    // Holds reference to the high-res offscreen ASCII canvas from AsciiDisplay
+    const asciiRenderCanvasRef = useRef(null);
+
+    // reference to hold latest recording info (avoids stale closures)
+    const recordingInfoRef = useRef(null);
+
     // Initialize the hook
-    const { videoRef, canvasRef, asciiFrameRef, error } = useAsciiCam(settings);
+    const { videoRef, canvasRef, asciiFrameRef, error, capturePhoto, startRecording, stopRecording } = useAsciiCam(settings);
 
     const handleUpdateSettings = (newSettings) => {
         setSettings(prev => ({ ...prev, ...newSettings }));
@@ -18,6 +29,134 @@ const App = () => {
 
     const handleResetSettings = () => {
         setSettings(DEFAULT_SETTINGS);
+    };
+
+    const handleDownloadCapture = () => {
+        if (lastMedia) {
+            const a = document.createElement('a');
+            a.href = lastMedia.url;
+            a.download = lastMedia.type === 'photo' ? 'ascii.png' : lastMedia.type === 'gif' ? 'ascii.gif' : 'ascii.webm';
+            a.click();
+        }
+    };
+
+    const handleShareCapture = (platform) => {
+        if (!lastMedia) return;
+        const { url } = lastMedia;
+
+        if (navigator.share && lastMedia.file) {
+            try {
+                navigator.share({
+                    title: 'AsciiStream capture',
+                    text: 'Check out my AsciiStream!',
+                    files: [lastMedia.file]
+                });
+            } catch (e) {
+                console.warn('Share failed', e);
+            }
+            return;
+        }
+
+        switch (platform) {
+            case 'twitter':
+                window.open(
+                    `https://twitter.com/intent/tweet?text=${encodeURIComponent('AsciiStream capture')}&url=${encodeURIComponent(url)}`,
+                    '_blank'
+                );
+                break;
+            case 'whatsapp':
+                window.open(
+                    `https://api.whatsapp.com/send?text=${encodeURIComponent('AsciiStream capture: ' + url)}`,
+                    '_blank'
+                );
+                break;
+            case 'instagram':
+                alert('Instagram sharing is only supported on mobile devices via the native share sheet.');
+                break;
+            case 'snapchat':
+                window.open(
+                    `https://www.snapchat.com/scan?attachmentUrl=${encodeURIComponent(url)}`,
+                    '_blank'
+                );
+                break;
+            default:
+                break;
+        }
+    };
+
+    const handleCopyLink = () => {
+        if (lastMedia) {
+            navigator.clipboard.writeText(lastMedia.url);
+            alert('Link copied to clipboard!');
+        }
+    };
+
+    // capture handlers
+    const doCapturePhoto = async (blobFromDisplay) => {
+        const blob = blobFromDisplay instanceof Blob ? blobFromDisplay : await capturePhoto();
+        if (blob) {
+            const url = URL.createObjectURL(blob);
+            setLastMedia({ type: 'photo', url, thumbnail: url, file: new File([blob], 'photo.png', { type: blob.type }) });
+        }
+    };
+
+    const doStartRecording = () => {
+        // Use the high-res ASCII render canvas for recording when available
+        startRecording({ collectGifFrames: true, gifFps: 10, externalCanvas: asciiRenderCanvasRef.current });
+        setIsRecording(true);
+        recordingInfoRef.current = { start: Date.now() };
+    };
+
+    const doStopRecording = async () => {
+        const result = await stopRecording();
+        setIsRecording(false);
+        if (result && result.videoBlob) {
+            const videoUrl = URL.createObjectURL(result.videoBlob);
+            const thumb = videoUrl; // using video itself as thumbnail
+            const media = {
+                type: 'video',
+                url: videoUrl,
+                thumbnail: thumb,
+                duration: result.duration,
+                file: new File([result.videoBlob], 'clip.webm', { type: result.videoBlob.type }),
+                gifFrames: result.gifFrames
+            };
+            setLastMedia(media);
+            recordingInfoRef.current = media;
+        }
+    };
+
+    const handleRequestGif = async () => {
+        const info = recordingInfoRef.current;
+        if (!info || info.type !== 'video' || info.duration > 10) return;
+        if (!info.gifFrames || info.gifFrames.length === 0) {
+            console.warn('No GIF frames collected');
+            return;
+        }
+        try {
+            const GIF = (await import('gif.js.optimized')).default;
+            const renderCanvas = asciiRenderCanvasRef.current;
+            const w = renderCanvas?.width || 640;
+            const h = renderCanvas?.height || 480;
+            const encoder = new GIF({ workers: 2, quality: 10, width: w, height: h, workerScript: '/gif.worker.js' });
+            const loadImg = (blob) => new Promise((res) => {
+                const img = new Image();
+                img.onload = () => res(img);
+                img.src = URL.createObjectURL(blob);
+            });
+            for (const blob of info.gifFrames) {
+                const img = await loadImg(blob);
+                encoder.addFrame(img, { delay: Math.round(1000 / 10) });
+            }
+            encoder.on('finished', (gifBlob) => {
+                const gifUrl = URL.createObjectURL(gifBlob);
+                setLastMedia((m) => ({ ...m, type: 'gif', url: gifUrl, file: new File([gifBlob], 'clip.gif', { type: gifBlob.type }) }));
+            });
+            encoder.render();
+        } catch (e) {
+            console.error('GIF export failed', e);
+            alert('GIF export failed: ' + e.message);
+        }
     };
 
     return (
@@ -63,6 +202,17 @@ const App = () => {
                         colorMode={settings.colorMode}
                         fontSize={settings.fontSize}
                         glow={settings.glow}
+                        captureMode={captureMode}
+                        setCaptureMode={setCaptureMode}
+                        isRecording={isRecording}
+                        onCapturePhoto={doCapturePhoto}
+                        onStartRecording={doStartRecording}
+                        onStopRecording={doStopRecording}
+                        lastMedia={lastMedia}
+                        requestGifExport={handleRequestGif}
+                        onDownloadCapture={handleDownloadCapture}
+                        onShareCapture={handleShareCapture}
+                        onAsciiCanvasReady={(canvas) => { asciiRenderCanvasRef.current = canvas; }}
                     />
                 )}
             </div>
@@ -85,6 +235,14 @@ const App = () => {
                     updateSettings={handleUpdateSettings}
                     resetSettings={handleResetSettings}
                     videoRef={videoRef}
+                    captureMode={captureMode}
+                    setCaptureMode={setCaptureMode}
+                    isRecording={isRecording}
+                    onCapturePhoto={doCapturePhoto}
+                    onStartRecording={doStartRecording}
+                    onStopRecording={doStopRecording}
+                    lastMedia={lastMedia}
+                    requestGifExport={handleRequestGif}
                 />
 
                 {/* Toggle button for Desktop to collapse sidebar */}

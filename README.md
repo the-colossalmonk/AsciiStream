@@ -66,4 +66,12 @@ AsciiStream is a high-performance, real-time webcam filter that converts video i
 - **Flip Camera**: Mirror the video feed.
 - **Invert Colors**: Swap foreground and background colors.
 
+### Capture and Share
+
+- **Photo Mode**: Capture a still image from the ASCII feed.
+- **Video Mode**: Record short clips (up to 10 s is recommended).
+- **Export as GIF**: If your video is ≤ 10 seconds you can convert it to a looping GIF.
+- **Polaroid Preview**: A "polaroid" window appears with sharing options after capture.
+- **Sharing Options**: Download locally, tweet, send via WhatsApp or (on mobile) use the system share sheet. Instagram is greyed out on desktop since web sharing isn’t supported.
+
 ---

@@ -150,5 +150,80 @@ export const useAsciiCam = (settings) => {
         };
     }, [streamActive, processFrame]);
 
-    return { videoRef, canvasRef, asciiFrameRef, error };
+    // Photo capture util (externalCanvas overrides the raw processing canvas)
+    const capturePhoto = async (externalCanvas) => {
+        const canvas = externalCanvas || canvasRef.current;
+        if (!canvas) return null;
+        return new Promise((resolve) => {
+            canvas.toBlob((blob) => {
+                resolve(blob);
+            }, 'image/png');
+        });
+    };
+
+    // Recording state stored in refs to avoid triggering re-renders
+    const mediaRecorderRef = useRef(null);
+    const recordedChunksRef = useRef([]);
+    const recordingStartRef = useRef(0);
+    const gifFramesRef = useRef([]); // for GIF export
+    const gifCaptureIntervalRef = useRef(null);
+
+    // externalCanvas: the high-res offscreen ASCII render canvas from AsciiDisplay
+    const startRecording = ({ collectGifFrames = false, gifFps = 10, externalCanvas } = {}) => {
+        const canvas = externalCanvas || canvasRef.current;
+        if (!canvas) return;
+        const stream = canvas.captureStream(30);
+        recordedChunksRef.current = [];
+
+        // Pick best supported codec for recording
+        const mimeType = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm';
+        mediaRecorderRef.current = new MediaRecorder(stream, { mimeType });
+        mediaRecorderRef.current.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) {
+                recordedChunksRef.current.push(e.data);
+            }
+        };
+        recordingStartRef.current = Date.now();
+
+        if (collectGifFrames) {
+            gifFramesRef.current = [];
+            gifCaptureIntervalRef.current = setInterval(() => {
+                canvas.toBlob((blob) => {
+                    if (blob) gifFramesRef.current.push(blob);
+                }, 'image/png');
+            }, 1000 / gifFps);
+        }
+
+        mediaRecorderRef.current.start(100); // collect chunks every 100ms
+    };
+
+    const stopRecording = () => {
+        return new Promise((resolve) => {
+            if (!mediaRecorderRef.current) {
+                resolve(null);
+                return;
+            }
+            mediaRecorderRef.current.onstop = () => {
+                const duration = (Date.now() - recordingStartRef.current) / 1000;
+                const videoBlob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
+
+                // clear gif interval if running
+                if (gifCaptureIntervalRef.current) {
+                    clearInterval(gifCaptureIntervalRef.current);
+                    gifCaptureIntervalRef.current = null;
+                }
+
+                // if longer than 10s we don't bother keeping frames
+                const frames = duration <= 10 ? gifFramesRef.current.slice() : [];
+                if (duration > 10) {
+                    gifFramesRef.current = [];
+                }
+
+                resolve({ videoBlob, duration, gifFrames: frames });
+            };
+            mediaRecorderRef.current.stop();
+        });
+    };
+
+    return { videoRef, canvasRef, asciiFrameRef, error, capturePhoto, startRecording, stopRecording };
 };

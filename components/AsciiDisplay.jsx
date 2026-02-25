@@ -50,58 +50,62 @@ const AsciiDisplay = ({
     // Check if running on desktop (for social share disable logic)
     const isDesktop = !navigator.userAgentData?.mobile && !/Mobi|Android/i.test(navigator.userAgent);
 
-    // Optimized render loop — draws text into both the <pre> AND the offscreen canvas
+    // Fast render loop — ONLY updates the visible <pre> at 60fps (same as original)
     useEffect(() => {
         let animationId;
-
         const render = () => {
-            const text = asciiRef.current;
-
-            // 1. Update visible <pre>
-            if (preRef.current) preRef.current.textContent = text;
-
-            // 2. Draw into offscreen canvas for video recording
-            const oc = asciiRenderCanvasRef.current;
-            if (oc && text) {
-                const lines = text.split('\n');
-                const cols = lines[0]?.length || 80;
-                const rows = lines.length;
-                const scale = 2;
-                const charW = fontSize * 0.601 * scale;
-                const charH = fontSize * scale;
-                const W = Math.round(cols * charW);
-                const H = Math.round(rows * charH);
-
-                if (oc.width !== W || oc.height !== H) {
-                    oc.width = W;
-                    oc.height = H;
-                }
-
-                const ctx = oc.getContext('2d');
-                ctx.fillStyle = '#050505';
-                ctx.fillRect(0, 0, W, H);
-
-                const textColor = COLOR_MAP[colorMode] || '#e5e5e5';
-                ctx.fillStyle = textColor;
-                ctx.font = `${fontSize * scale}px monospace`;
-                ctx.textBaseline = 'top';
-
-                if (glow > 0 && colorMode !== ColorMode.TrueColor) {
-                    ctx.shadowColor = textColor;
-                    ctx.shadowBlur = glow * scale;
-                } else {
-                    ctx.shadowBlur = 0;
-                }
-
-                lines.forEach((line, i) => ctx.fillText(line, 0, i * charH));
-            }
-
+            if (preRef.current) preRef.current.textContent = asciiRef.current;
             animationId = requestAnimationFrame(render);
         };
-
         render();
         return () => cancelAnimationFrame(animationId);
+    }, [asciiRef]);
+
+    // Helper: draw current ASCII frame into the offscreen canvas (used for capture & recording)
+    const drawOffscreenFrame = useCallback(() => {
+        const oc = asciiRenderCanvasRef.current;
+        const text = asciiRef.current;
+        if (!oc || !text) return;
+
+        const lines = text.split('\n');
+        const cols = lines[0]?.length || 80;
+        const rows = lines.length;
+        const scale = 2;
+        const charW = fontSize * 0.601 * scale;
+        const charH = fontSize * scale;
+        const W = Math.round(cols * charW);
+        const H = Math.round(rows * charH);
+
+        if (oc.width !== W || oc.height !== H) {
+            oc.width = W;
+            oc.height = H;
+        }
+
+        const ctx = oc.getContext('2d');
+        ctx.fillStyle = '#050505';
+        ctx.fillRect(0, 0, W, H);
+
+        const textColor = COLOR_MAP[colorMode] || '#e5e5e5';
+        ctx.fillStyle = textColor;
+        ctx.font = `${fontSize * scale}px monospace`;
+        ctx.textBaseline = 'top';
+        ctx.shadowBlur = (glow > 0 && colorMode !== ColorMode.TrueColor) ? glow * scale : 0;
+        ctx.shadowColor = textColor;
+
+        lines.forEach((line, i) => ctx.fillText(line, 0, i * charH));
     }, [asciiRef, colorMode, fontSize, glow]);
+
+    // Offscreen canvas render loop — ONLY active during recording (feeds captureStream)
+    useEffect(() => {
+        if (!isRecording) return;
+        let animationId;
+        const loop = () => {
+            drawOffscreenFrame();
+            animationId = requestAnimationFrame(loop);
+        };
+        loop();
+        return () => cancelAnimationFrame(animationId);
+    }, [isRecording, drawOffscreenFrame]);
 
     // Tell parent about the offscreen canvas so it can be used for recording
     useEffect(() => {
@@ -109,6 +113,7 @@ const AsciiDisplay = ({
             onAsciiCanvasReady(asciiRenderCanvasRef.current);
         }
     }, [onAsciiCanvasReady]);
+
 
     // Show modal when a new capture arrives
     useEffect(() => {
@@ -148,6 +153,7 @@ const AsciiDisplay = ({
         if (captureMode === 'photo') {
             const oc = asciiRenderCanvasRef.current;
             if (oc) {
+                drawOffscreenFrame(); // render latest frame into canvas
                 oc.toBlob(blob => {
                     if (blob && typeof onCapturePhoto === 'function') onCapturePhoto(blob);
                 }, 'image/png');
@@ -159,7 +165,7 @@ const AsciiDisplay = ({
         } else {
             onStartRecording();
         }
-    }, [captureMode, isRecording, onCapturePhoto, onStartRecording, onStopRecording]);
+    }, [captureMode, isRecording, drawOffscreenFrame, onCapturePhoto, onStartRecording, onStopRecording]);
 
     // Social share button definition
     const isMobile = !isDesktop;
@@ -191,27 +197,41 @@ const AsciiDisplay = ({
     ];
 
     return (
-        <div className="relative w-full h-full flex flex-col items-center justify-center overflow-hidden bg-black">
+        <div className="relative w-full h-full flex flex-col overflow-hidden bg-black">
 
-            {/* Hidden offscreen canvas — used for video recording stream + photo capture */}
+            {/* Hidden offscreen canvas */}
             <canvas ref={asciiRenderCanvasRef} style={{ display: 'none' }} />
 
-            {/* Visible ASCII text */}
-            <div className="relative flex-1 flex items-center justify-center">
-                <pre
-                    ref={preRef}
-                    className={`font-mono leading-none whitespace-pre text-center select-none relative z-10 ${getColorStyles()}`}
-                    style={{ fontSize: `${fontSize}px`, WebkitFontSmoothing: 'antialiased', ...getGlowStyle() }}
-                />
-                <canvas
-                    ref={canvasRef}
-                    className={`absolute inset-0 w-full h-full pointer-events-none transition-opacity duration-300 ${colorMode === ColorMode.TrueColor ? 'opacity-100 mix-blend-multiply z-20' : 'opacity-0 z-0'}`}
-                    style={{ imageRendering: 'pixelated' }}
-                />
+            {/*
+              Centering layer — takes all remaining space above the controls bar.
+              The shrink-wrap div inside is `relative`-only, so it sizes exactly
+              to the <pre> text. The canvas absolute inset-0 then perfectly
+              overlaps the text for TrueColor mode.
+            */}
+            <div className="flex-1 flex items-center justify-center overflow-hidden">
+                <div className="relative">
+                    <pre
+                        ref={preRef}
+                        className={`font-mono leading-none whitespace-pre select-none relative z-10 ${getColorStyles()}`}
+                        style={{
+                            fontSize: `${fontSize}px`,
+                            WebkitFontSmoothing: 'antialiased',
+                            ...getGlowStyle()
+                        }}
+                    />
+                    <canvas
+                        ref={canvasRef}
+                        className={`absolute inset-0 w-full h-full pointer-events-none transition-opacity duration-300 ${colorMode === ColorMode.TrueColor ? 'opacity-100 mix-blend-multiply z-20' : 'opacity-0 z-0'}`}
+                        style={{
+                            imageRendering: 'pixelated',
+                            filter: colorMode === ColorMode.TrueColor ? 'brightness(1.5) saturate(1.3)' : 'none'
+                        }}
+                    />
+                </div>
             </div>
 
-            {/* Controls Bar */}
-            <div className="py-4 px-6 flex items-center gap-4 bg-black/60 backdrop-blur-md w-full justify-center">
+            {/* Controls Bar — sits in normal flow at the bottom */}
+            <div className="py-4 px-6 flex items-center gap-4 bg-black/60 backdrop-blur-md w-full justify-center z-30">
                 <div className="flex gap-2 border-r border-zinc-700 pr-4">
                     <button
                         onClick={() => setCaptureMode('photo')}
